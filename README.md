@@ -91,13 +91,68 @@ From the project root with the virtual environment active:
 python -m unittest discover -s tests -v
 ```
 
-The Tavily client and Groq model behavior are tested with mocked responses; running the unit tests does not require live API calls.
+The Tavily client, Groq model, and OpenRouter evaluator behavior are tested
+with mocked responses; running the unit tests does not require live API calls.
+
+## Evaluate the live agent with DeepEval
+
+DeepEval can assess the generated article's relevance to the request and its
+faithfulness to the research notes. The evaluation also checks that the
+researcher runs before the writer, the writer publishes one Markdown file, and
+the article cites only URLs returned in the research.
+
+Install the optional evaluation dependencies:
+
+```powershell
+python -m pip install -r requirements-eval.txt
+```
+
+Set `GROQ_API_KEY`, `TAVILY_API_KEY`, and `OPENROUTER_API_KEY` in `.env`.
+The agent continues to use Groq and Tavily; only DeepEval's judge uses
+OpenRouter. The default judge and fallback are OpenRouter models with the
+`:free` suffix. Override them with `DEEPEVAL_MODEL` and the comma-separated
+`DEEPEVAL_FALLBACK_MODELS`; the evaluator rejects model IDs without `:free`
+and rejects Groq and Gemini models. OpenRouter free models have provider- and
+account-dependent quotas and availability, so free-tier use is not guaranteed
+to be unlimited or uninterrupted.
+
+DeepEval metrics run sequentially to reduce concurrent token use. The judge
+requests JSON Schema responses in best-effort mode for compatibility with
+DeepEval's nested metric schemas, then validates the returned JSON against
+DeepEval's schema before passing it to the metric. Each judge request can
+generate up to 8192 completion tokens by default; set
+`DEEPEVAL_MAX_COMPLETION_TOKENS` to adjust this. A malformed or truncated
+structured response causes the evaluator to try the other configured free
+judge models and retry up to two more passes. The report records these
+structured-output errors and the model attempts. A rate-limit exhaustion or
+failure to get valid structured output is reported as `ERROR`, distinct from a
+metric that produced a low score.
+
+Run the evaluation from the project root:
+
+```powershell
+python -m evaluations.evaluate_agent
+```
+
+Each run saves a readable Markdown report and a full JSON report under
+`evaluation_reports/`. Reports include the request, article, research context,
+workflow and citation checks, metric scores and thresholds, judge reasons,
+and per-claim verdict details. Set `DEEPEVAL_REPORT_DIR` to change the report
+directory; relative paths are resolved from the project root.
+
+This evaluation makes live Groq, Tavily, and OpenRouter requests. The
+OpenRouter judge models are configured as free variants, but Groq and Tavily
+may incur charges, and all providers remain subject to their own quotas. Its
+results can vary with model and search-provider responses. It publishes the
+article into a temporary directory, but keeps the report files.
 
 ## Project layout
 
 ```text
 .
 ├── agent.py                         # Root agent and two specialist agents
+├── evaluations/
+│   └── evaluate_agent.py             # Opt-in live DeepEval evaluation
 ├── blog_research/
 │   ├── google_search.py              # Retained Google ADK search integration
 │   ├── markdown_publisher.py         # Safe Markdown filenames and file output
@@ -110,8 +165,10 @@ The Tavily client and Groq model behavior are tested with mocked responses; runn
 │   ├── root.txt
 │   └── writer.txt
 ├── tests/
-│   └── test_blog_research.py
+│   ├── test_blog_research.py
+│   └── test_evaluation_model.py
 ├── .env.example
+├── requirements-eval.txt             # Optional DeepEval dependencies
 └── requirements.txt
 ```
 
